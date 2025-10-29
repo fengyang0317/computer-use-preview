@@ -77,6 +77,8 @@ def main() -> int:
             model_name=args.model,
         )
         agent.agent_loop()
+        print('Browser launched. Press Enter here to close...')
+        input()
     return 0
 
 

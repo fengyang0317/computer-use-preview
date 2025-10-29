@@ -16,6 +16,7 @@ import termcolor
 import time
 import os
 import sys
+from pathlib import Path
 from ..computer import (
     Computer,
     EnvState,
@@ -86,6 +87,12 @@ class PlaywrightComputer(Computer):
         self._screen_size = screen_size
         self._search_engine_url = search_engine_url
         self._highlight_mouse = highlight_mouse
+        self._context = None
+        self._page = None
+        self._playwright = None
+        self._user_data_dir = (
+            Path(__file__).resolve().parents[2] / "user-data"
+        )
 
     def _handle_new_page(self, new_page: playwright.sync_api.Page):
         """The Computer Use model only supports a single tab at the moment.
@@ -99,8 +106,11 @@ class PlaywrightComputer(Computer):
 
     def __enter__(self):
         print("Creating session...")
+        self._user_data_dir.mkdir(parents=True, exist_ok=True)
+
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(
+        self._context = self._playwright.chromium.launch_persistent_context(
+            user_data_dir=str(self._user_data_dir),
             args=[
                 "--disable-extensions",
                 "--disable-file-system",
@@ -112,14 +122,16 @@ class PlaywrightComputer(Computer):
                 # No '--no-sandbox' arg means the sandbox is on.
             ],
             headless=bool(os.environ.get("PLAYWRIGHT_HEADLESS", False)),
-        )
-        self._context = self._browser.new_context(
             viewport={
                 "width": self._screen_size[0],
                 "height": self._screen_size[1],
-            }
+            },
         )
-        self._page = self._context.new_page()
+
+        if self._context.pages:
+            self._page = self._context.pages[0]
+        else:
+            self._page = self._context.new_page()
         self._page.goto(self._initial_url)
 
         self._context.on("page", self._handle_new_page)
@@ -134,18 +146,15 @@ class PlaywrightComputer(Computer):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._context:
             self._context.close()
-        try:
-            self._browser.close()
-        except Exception as e:
-            # Browser was already shut down because of SIGINT or such.
-            if "Browser.close: Connection closed while reading from the driver" in str(
-                e
-            ):
-                pass
-            else:
-                raise
 
-        self._playwright.stop()
+        if self._playwright:
+            try:
+                self._playwright.stop()
+            except Exception as e:
+                if "Playwright has been closed" in str(e):
+                    pass
+                else:
+                    raise
 
     def open_web_browser(self) -> EnvState:
         return self.current_state()
